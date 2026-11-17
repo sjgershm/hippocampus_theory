@@ -30,27 +30,11 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from hippo import context_gates, bump_inputs  # noqa: E402
 from hippo import ContextHippocampalModel, THETA_PERIOD  # noqa: E402
 from hippo.environments import annular_track_undirected  # noqa: E402
 from hippo.plotting import plt, save                     # noqa: E402
 
-
-def context_gates(n, rng, frac=0.6, lo=0.05):
-    """Two sparse, partially-overlapping DG context ensembles. A subset of CA3
-    columns is gated ON (gate 1) per context, the rest nearly OFF (gate `lo`).
-    The two ensembles are anti-correlated (overlap = 2*frac - 1), so distinct
-    contexts engage distinct ensembles -> remapping, while a shared core keeps
-    remapping partial (cf. partial remapping)."""
-    u = rng.random(n)
-    g_A = np.where(u < frac, 1.0, lo)
-    g_B = np.where(u > 1 - frac, 1.0, lo)
-    return np.vstack([g_A, g_B])
-
-
-def bump_inputs(n, sigma=1.6):
-    x = np.arange(n)
-    X = np.exp(-0.5 * ((x[:, None] - x[None, :]) / sigma) ** 2)
-    return X / X.sum(1, keepdims=True)
 
 
 def corr(a, b):

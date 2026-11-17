@@ -7,10 +7,13 @@ variations on a hippocampal theme."
 from .model import (
     HippocampalModel,
     ContextHippocampalModel,
+    AntitheticStream,
     project_to_generator,
     is_generator,
 )
 from . import environments
+from .ensembles import context_gates, bump_inputs, flat_corr
+from .pacemaker import pacemaker_phases, branch_stream, SIGMA_ETA
 
 # --- Physical scales, applied consistently across all simulations ------------ #
 # Spatial: cm per discretization bin (so 1D tracks / 2D arenas are physical,
@@ -28,9 +31,16 @@ LEAK_RATE_MEAN = 1.0
 __all__ = [
     "HippocampalModel",
     "ContextHippocampalModel",
+    "AntitheticStream",
     "project_to_generator",
     "is_generator",
     "environments",
+    "context_gates",
+    "bump_inputs",
+    "flat_corr",
+    "pacemaker_phases",
+    "branch_stream",
+    "SIGMA_ETA",
     "BIN_CM",
     "THETA_PERIOD",
     "LEAK_RATE_MEAN",

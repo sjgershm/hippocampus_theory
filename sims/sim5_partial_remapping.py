@@ -42,30 +42,13 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hippo import ContextHippocampalModel, THETA_PERIOD  # noqa: E402
+from hippo import context_gates, bump_inputs, flat_corr  # noqa: E402
 from hippo.environments import annular_track_undirected  # noqa: E402
 from hippo.plotting import plt, save                     # noqa: E402
+from sim5b_morph_frequency import run as run_morph_frequency  # noqa: E402
 
 DIFF_LO = 1.0    # low  differentiation  -> matches Leutgeb (partial)
 DIFF_HI = 6.0    # high differentiation  -> matches Wills   (complete)
-
-
-def context_gates(n, rng, frac=0.6, lo=0.05):
-    """Two overlapping DG ensembles (square / circle); the overlap is the
-    shared, non-remapping core."""
-    u = rng.random(n)
-    return np.vstack([np.where(u < frac, 1.0, lo),
-                      np.where(u > 1 - frac, 1.0, lo)])
-
-
-def bump_inputs(n, sigma=1.6):
-    x = np.arange(n)
-    X = np.exp(-0.5 * ((x[:, None] - x[None, :]) / sigma) ** 2)
-    return X / X.sum(1, keepdims=True)
-
-
-def flat_corr(A, B):
-    a, b = A.ravel() - A.mean(), B.ravel() - B.mean()
-    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
 
 
 def context_vector(m, g):
@@ -106,39 +89,59 @@ def run(n=30, lam=0.20, seed=2, diff_lo=DIFF_LO, diff_hi=DIFF_HI):
     change = np.abs(act[-1] - act[0]) / (np.maximum(act[0], act[-1]) + 1e-12)
     frac_remap = float(np.mean(change > 0.5))
 
+    # panel D: the same contrast produced by a *manipulated* variable --
+    # how often intermediate morphs were experienced (Plitt & Giocomo 2021)
+    mf = run_morph_frequency(n=n, lam=lam, seed=seed, n_trials=0)
+
     return dict(n=n, morph=morph, out=out, diffs=diffs, remap=remap,
                 diff_lo=diff_lo, diff_hi=diff_hi,
-                act_norm=act_norm, frac_remap=frac_remap)
+                act_norm=act_norm, frac_remap=frac_remap, mf=mf)
 
 
 def make_figure(res):
-    fig, ax = plt.subplots(1, 3, figsize=(13, 4.2))
+    # 2 x 2. The panels are wider than in the original 1x3 layout, so the
+    # centred titles clear the bold panel labels.
+    fig, ax = plt.subplots(2, 2, figsize=(11, 8.4))
+    axA, axB = ax[0]
+    axC, axD = ax[1]
     mp = res["morph"] * 100
 
     # (A) morph response: gradual (low g, Leutgeb) vs abrupt (high g, Wills)
-    ax[0].plot(mp, res["out"]["lo"], "-o", color="#2166ac", ms=3,
-               label="low differentiation\n— partial (Leutgeb)")
-    ax[0].plot(mp, res["out"]["hi"], "-o", color="#b2182b", ms=3,
-               label="high differentiation\n— complete (Wills)")
-    ax[0].set_xlabel("morph level (% toward circle)")
-    ax[0].set_ylabel("CA1 similarity to square")
-    ax[0].set_title("A  Gradual vs abrupt remapping")
-    ax[0].legend(fontsize=7.5, loc="lower left")
+    axA.plot(mp, res["out"]["lo"], "-o", color="#2166ac", ms=3,
+             label="low differentiation\n— partial (Leutgeb)")
+    axA.plot(mp, res["out"]["hi"], "-o", color="#b2182b", ms=3,
+             label="high differentiation\n— complete (Wills)")
+    axA.set_xlabel("morph level (% toward circle)")
+    axA.set_ylabel("CA1 similarity to square")
+    axA.set_title("A  Gradual vs abrupt remapping")
+    axA.legend(fontsize=7.5, loc="lower left")
 
     # (B) remapping between extremes grows with context differentiation
-    ax[1].plot(res["diffs"], res["remap"], "-o", color="#1b7837", ms=3)
-    ax[1].set_xlabel("context differentiation")
-    ax[1].set_ylabel("remapping (1 − square/circle corr)")
-    ax[1].set_title("B  Remapping grows with differentiation")
+    axB.plot(res["diffs"], res["remap"], "-o", color="#1b7837", ms=3)
+    axB.set_xlabel("context differentiation")
+    axB.set_ylabel("remapping (1 − square/circle corr)")
+    axB.set_title("B  Remapping vs differentiation")
 
     # (C) per-cell partial remapping (high g): some cells switch, a shared core
     #     does not
-    im = ax[2].imshow(res["act_norm"].T, cmap="magma", origin="lower",
-                      aspect="auto", extent=[0, 100, 0, res["n"]])
-    ax[2].set_xlabel("morph level (% toward circle)")
-    ax[2].set_ylabel("cell (sorted)")
-    ax[2].set_title("C  Partial remapping (per cell)")
-    fig.colorbar(im, ax=ax[2], fraction=0.046, pad=0.04, label="norm. activity")
+    im = axC.imshow(res["act_norm"].T, cmap="magma", origin="lower",
+                    aspect="auto", extent=[0, 100, 0, res["n"]])
+    axC.set_xlabel("morph level (% toward circle)")
+    axC.set_ylabel("cell (sorted)")
+    axC.set_title("C  Partial remapping (per cell)")
+    fig.colorbar(im, ax=axC, fraction=0.046, pad=0.04, label="norm. activity")
+
+    # (D) the same contrast, driven by how often intermediate morphs were
+    #     experienced rather than by the differentiation parameter
+    mf = res["mf"]
+    for name in ("Rare Morph", "Frequent Morph"):
+        d = mf["out"][name]
+        axD.plot(mf["morph"] * 100, d["sim0"], "-o", color=d["color"], ms=3,
+                 label=name)
+    axD.set_xlabel("morph level (% toward circle)")
+    axD.set_ylabel("CA1 similarity to the 0 end")
+    axD.set_title("D  Experienced morph frequency")
+    axD.legend(fontsize=7.5, loc="lower left")
 
     fig.tight_layout()
     return fig

@@ -6,8 +6,11 @@ The leak rates are taken from CA1 data: lambda = 1/tau for the 32 cells best fit
 by exponential decay (doi:10.1002/hipo.70105, SI). The time constants tau are
 exponentially distributed, so the same population is read out two ways:
 
-  - SPATIAL (panels A-C): each cell's steady-state field width falls with the
-    leak rate, width = c/sqrt(lambda) = c*sqrt(tau) (screened Green's function,
+  - SPATIAL (panels A-C): read out in ENCODING MODE -- CA3 is clamped to EC
+    input, so CA1 integrates the animal's *experienced* position rather than a
+    theta rollout, with its own slow leak rate over behavioural time. Each
+    cell's steady-state field width then falls with the leak rate,
+    width = c/sqrt(lambda) = c*sqrt(tau) (screened Green's function,
     DERIVATIONS.md). Pushing the leak-rate distribution through this relation
     (a single spatial-scale parameter c) predicts the distribution of tuning
     widths. Because tau is exponential this pushforward is a Rayleigh/Weibull-2
@@ -19,8 +22,23 @@ exponentially distributed, so the same population is read out two ways:
     (Momennejad & Howard 2018; Masset et al. 2025).
 
 Spatial scale: BIN_CM cm per bin (hippo.BIN_CM), used consistently everywhere.
-The steady-state (asymptotic) width is used here -- the intrinsic tuning scale --
-while the behavioral SR simulations use the 125 ms truncated resolvent.
+
+Why asymptotic and not one theta cycle. This simulation is the ENCODING-mode
+read-out, and it is the only one in the repository that is: CA1 integrates
+experienced position with its own slow leak rate (tau = 1-49 s, CA1_TAU), over
+behavioural time, so the horizon is not a theta cycle and no THETA_PERIOD
+appears anywhere in this file. Every other simulation is SIMULATION mode -- CA3
+rolls out, CA1 accumulates one sweep -- and uses the 125 ms truncated resolvent
+at the much faster within-cycle rate.
+
+The distinction is load-bearing, not cosmetic. A predictive map assembled from
+theta sweeps inherits a floor on its width equal to the spatial reach of one
+sweep (12.4 cm RMS in this arena), and 67% of the recorded fields are narrower
+than that; composing the two timescales destroys the w = c/sqrt(lambda) law
+(log-log slope -0.18 instead of -0.50). See check_two_timescale.py. In encoding
+mode no sweep enters, there is no floor, and the law is exact in the large-arena
+limit: the fitted slope converges -0.4888 -> -0.4965 -> -0.4992 for arenas of
+144x120, 208x176 and 272x232 cm, with c stable at 8.0 cm per sqrt(model unit).
 
 See DERIVATIONS.md for the math (and the Fréchet vs Gamma comparison, §3.7).
 """
@@ -30,6 +48,7 @@ import pickle
 import sys
 
 import numpy as np
+from matplotlib.colors import LogNorm
 from scipy import stats
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,6 +57,10 @@ from hippo.environments import open_arena                  # noqa: E402
 from hippo.plotting import plt, save, panel_label          # noqa: E402
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Rendering of the example fields in panel A (see make_figure for why).
+FIELD_CROP_CM = 72.0     # half-width of the common spatial window
+FIELD_VMIN = 1e-3        # floor of the log colour scale (fraction of peak)
 
 # Time constants (tau, seconds) of CA1 cells best fit by exponential decay, from
 # the SI of doi:10.1002/hipo.70105. Leak rate lambda = 1/tau (per second).
@@ -142,18 +165,51 @@ def make_figure(res):
     wd, pr, dc = res["wd"], res["pr"], res["dc"]
     nx, ny = wd["shape"]
     w_emp, lam_emp = res["w_emp"], res["lam_emp"]
-    fig = plt.figure(figsize=(12, 10))
-    gs = fig.add_gridspec(3, 6, height_ratios=[0.82, 1, 1], hspace=0.5, wspace=1.1)
+    # Row A gets its own sub-grid: the wide `wspace` below is tuned for the
+    # labelled axes B-E, but the cropped example fields are square and need no
+    # y-axis, so there they only shrink the images.
+    fig = plt.figure(figsize=(12, 11.0))
+    gs = fig.add_gridspec(3, 6, height_ratios=[1.45, 1, 1], hspace=0.45, wspace=1.1)
+    gsA = gs[0, :].subgridspec(1, 3, wspace=0.12)
 
-    # (A) example fields at three widths (cm)
+    # (A) example fields at three widths (cm).
+    #
+    # Rendering note: the resolvent column has a sharp cusp at the source -- it
+    # falls to 0.21 / 0.38 / 0.49 of peak within ONE bin, so its half-max radius
+    # is a single bin at every leak rate. The width therefore lives entirely in
+    # the exponential tail, which a linear colour scale crushes into the bottom
+    # of the colour range, making the three fields look alike. We crop to a
+    # COMMON +/-FIELD_CROP_CM window (so the sizes stay comparable) and use a
+    # log colour scale, which spreads the tail over most of the range. The
+    # dashed ring is the measured RMS width -- the quantity plotted in panel B.
+    kx = int(FIELD_CROP_CM / BIN_CM)
+    cx, cy = nx // 2, ny // 2
+    extent = [-FIELD_CROP_CM, FIELD_CROP_CM, -FIELD_CROP_CM, FIELD_CROP_CM]
+    th = np.linspace(0, 2 * np.pi, 200)
+    axsA = []
     for k, (w, f) in enumerate(wd["examples"]):
-        ax = fig.add_subplot(gs[0, 2 * k:2 * k + 2])
-        extent = [0, nx * BIN_CM, 0, ny * BIN_CM]
-        ax.imshow(f.T / f.max(), origin="lower", cmap="jet", aspect="equal", extent=extent)
+        ax = fig.add_subplot(gsA[0, k])
+        axsA.append(ax)
+        g = (f / f.max())[cx - kx:cx + kx + 1, cy - kx:cy + kx + 1]
+        im = ax.imshow(np.clip(g, FIELD_VMIN / 10, 1.0).T, origin="lower",
+                       cmap="magma", norm=LogNorm(FIELD_VMIN, 1.0),
+                       aspect="equal", extent=extent)
+        ax.plot(w * np.cos(th), w * np.sin(th), color="w", lw=1.1, ls="--")
         ax.set_xticks([]); ax.set_yticks([])
         ax.set_title(f"width ≈ {w:.0f} cm", fontsize=10)
         if k == 0:
             panel_label(ax, "A")
+            # one scale bar: all three panels share the same spatial window
+            x0, y0 = -FIELD_CROP_CM + 9, -FIELD_CROP_CM + 11
+            ax.plot([x0, x0 + 50], [y0, y0], color="w", lw=2.2,
+                    solid_capstyle="butt")
+            ax.text(x0 + 25, y0 + 4, "50 cm", color="w", fontsize=7.5,
+                    ha="center", va="bottom")
+    cb = fig.colorbar(im, ax=axsA, fraction=0.028, pad=0.02)
+    cb.set_label("activity (frac. of peak, log)", fontsize=7.5)
+    cb.ax.tick_params(labelsize=7)
+    # A-C are the encoding-mode read-out rather than the theta-sweep one; that
+    # belongs in the caption, not on the figure (see the module docstring).
 
     # (B) field width vs leak rate: model measurements follow width = c/sqrt(lam)
     axB = fig.add_subplot(gs[1, 0:3])

@@ -6,10 +6,11 @@ import os
 
 SIMS = [
     "sims/sim1_theta_phase.py",
+    "analysis_antithetic_variance.py",     # antithetic sweeps -> variance reduction
     "sims/sim2_predictive_inference.py",   # backward skew + reward clustering + inference
     "sims/sim3_multiscale_discounting.py",
     "sims/sim4_context_dg.py",
-    "sims/sim5_partial_remapping.py",
+    "sims/sim5_partial_remapping.py",  # + sim5b_morph_frequency component (panel D)
     "sims/sim6_splitter_cells.py",
 ]
 

@@ -7,6 +7,13 @@ position sweeps ahead of the animal within the cycle.
 
   - Johnson & Redish (2007): at a choice point the rollout sweeps forward and
     serially samples the arms across cycles (panels A-D).
+  - Vollan et al. (2025): the arm sampled alternates left/right across
+    successive cycles. Here that comes from a THETA-SKIPPING PACEMAKER whose
+    phase drifts by half a cycle each theta period and diffuses slowly: the
+    drift flips the branch (antithetic sampling), the diffusion lets it
+    occasionally fail, and the phase stays marginally uniform so the Eq.-5
+    average remains faithful to the master equation (DERIVATIONS §C.11;
+    Fig. 1b quantifies the variance gain).
   - O'Keefe & Recce (1993); Skaggs et al. (1996): a place cell fires when the
     sweep reaches its field, so as the animal approaches, the firing phase
     advances -- phase precession (panels E-F).
@@ -19,7 +26,8 @@ import numpy as np
 from scipy.sparse.csgraph import shortest_path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from hippo import HippocampalModel, BIN_CM, THETA_PERIOD  # noqa: E402
+from hippo import (HippocampalModel, BIN_CM, THETA_PERIOD,   # noqa: E402
+                   pacemaker_phases, branch_stream, SIGMA_ETA)
 from hippo.environments import t_maze, linear_track      # noqa: E402
 from hippo.plotting import plt, save                     # noqa: E402
 
@@ -33,21 +41,38 @@ def graph_distance(W):
 # --------------------------------------------------------------------------- #
 #  forward sweeps (T-maze + linear track)
 # --------------------------------------------------------------------------- #
-def run_sweeps(seed=3, theta_T=THETA_PERIOD, n_bins=50, stem=14, arm=8):
+def run_sweeps(seed=3, theta_T=THETA_PERIOD, n_bins=50, stem=14, arm=8,
+               antithetic=True, sigma=SIGMA_ETA):
     rng = np.random.default_rng(seed)
     W, coords, choice = t_maze(stem=stem, arm=arm, k=1.0)
     model = HippocampalModel(W, lam=0.2)
     left_states = set(range(stem, stem + arm))
     right_states = set(range(stem + arm, stem + 2 * arm))
 
-    n_cycles = 50
-    sweeps, arm_choice = [], []
-    for _ in range(n_cycles):
-        _, st = model.decode_sweep(choice, theta_T, n_bins, rng)
-        sweeps.append(st)
+    def arm_of(st):
         entered = [s for s in st if s in left_states or s in right_states]
-        arm_choice.append(0 if not entered else
-                          (-1 if entered[0] in left_states else 1))
+        return 0 if not entered else (-1 if entered[0] in left_states else 1)
+
+    # The branch taken on each theta cycle is set by the THETA-SKIPPING
+    # PACEMAKER (hippo/pacemaker.py): a phase locked to half the theta frequency
+    # that drifts by 1/2 each cycle and diffuses slowly,
+    #     u^k = (u^0 + k/2 + eps^k) mod 1,   eps^k = eps^{k-1} + eta^k.
+    # The +1/2 drift flips the branch every cycle (antithetic), the diffusion
+    # lets it occasionally fail, and u^k stays marginally uniform so the Eq.-5
+    # average remains faithful to the master equation (DERIVATIONS §C.11).
+    # Everything else about each rollout is drawn independently.
+    n_cycles = 50
+    if antithetic:
+        u = pacemaker_phases(n_cycles, rng, sigma=sigma)
+        sweeps = [model.decode_sweep(choice, theta_T, n_bins,
+                                     u=branch_stream(rng, u[k]))[1]
+                  for k in range(n_cycles)]
+    else:
+        sweeps = model.sample_sweeps(choice, theta_T, n_bins, n_cycles, rng)
+    arm_choice = [arm_of(st) for st in sweeps]
+    ac = np.asarray(arm_choice)
+    adj = float(np.mean(ac[1:] != ac[:-1]))
+    trip = float(np.mean((ac[:-2] != ac[1:-1]) & (ac[1:-1] != ac[2:])))
 
     dist = graph_distance(W)
     start = stem - 4
@@ -66,7 +91,7 @@ def run_sweeps(seed=3, theta_T=THETA_PERIOD, n_bins=50, stem=14, arm=8):
 
     return dict(coords=coords, choice=choice, sweeps=sweeps, W=W,
                 arm_choice=np.array(arm_choice), ahead=ahead, n_bins=n_bins,
-                track=track, cyc_T=cyc_T)
+                track=track, cyc_T=cyc_T, adj=adj, trip=trip, sigma=sigma)
 
 
 # --------------------------------------------------------------------------- #
@@ -123,7 +148,9 @@ def make_figure(res):
                 axA.plot(coords[[i, j], 0], coords[[i, j], 1], "-",
                          color="0.88", lw=8, solid_capstyle="round", zorder=1)
     rng = np.random.default_rng(0)
-    for i in list(range(0, len(sw["sweeps"]), 2))[:16]:
+    # consecutive cycles (NOT every other one, which under alternation would
+    # pick only one arm)
+    for i in range(min(16, len(sw["sweeps"]))):
         st = sw["sweeps"][i]
         c = "#2166ac" if sw["arm_choice"][i] == -1 else (
             "#b2182b" if sw["arm_choice"][i] == 1 else "0.6")
@@ -153,13 +180,13 @@ def make_figure(res):
     # (C) serial arm sampling
     axC = fig.add_subplot(gs[0, 2])
     ac = sw["arm_choice"]; cyc = np.arange(len(ac))
-    axC.plot(cyc, ac, "-", color="0.7", lw=1, zorder=1)
-    axC.scatter(cyc[ac == -1], ac[ac == -1], color="#2166ac", s=32, label="left", zorder=2)
-    axC.scatter(cyc[ac == 1], ac[ac == 1], color="#b2182b", s=32, label="right", zorder=2)
-    axC.set_yticks([-1, 0, 1]); axC.set_yticklabels(["left", "stem", "right"])
+    axC.plot(cyc, ac, "-", color="0.78", lw=0.9, zorder=1)
+    axC.scatter(cyc[ac == -1], ac[ac == -1], color="#2166ac", s=26, zorder=3)
+    axC.scatter(cyc[ac == 1], ac[ac == 1], color="#b2182b", s=26, zorder=3)
+    axC.set_yticks([-1, 1]); axC.set_yticklabels(["left", "right"])
+    axC.set_ylim(-1.9, 1.9)
     axC.set_xlabel("theta cycle")
-    axC.set_title("C  Serial arm sampling")
-    axC.legend(fontsize=9, loc="center right")
+    axC.set_title("C  Left-right alternation")
 
     # (D) linear-track theta sequences
     axD = fig.add_subplot(gs[1, 0])
@@ -206,8 +233,13 @@ def make_figure(res):
 
 if __name__ == "__main__":
     res = run()
-    ac = res["sw"]["arm_choice"]
+    sw = res["sw"]
+    ac = sw["arm_choice"]
+    print(f"  branch set by the theta-skipping pacemaker "
+          f"(sigma_eta = {sw['sigma']})")
     print(f"  arm sampling: left={np.mean(ac == -1):.0%}, right={np.mean(ac == 1):.0%}")
+    print(f"  alternation: adjacent={sw['adj']:.0%}, triplet={sw['trip']:.0%} "
+          f"(Vollan et al. 2025: 80% of triplets)")
     print(f"  phase-position slope = {res['ph']['slope'] / BIN_CM:.1f} deg/cm")
     fig = make_figure(res)
     save(fig, "sim1_theta_phase.png")
